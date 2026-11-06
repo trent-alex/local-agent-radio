@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from .errors import AuthorizationDenied
-from .models import Capability, Cursor, Message, MessageKind
+from .models import Capability, Cursor, IdentityStatus, Message, MessageKind
 from .ports import AppendMessage, AuditSink, BrokerRepository
 
 
@@ -136,8 +136,14 @@ class BrokerService:
         action: str,
         correlation_id: UUID,
     ) -> None:
+        identity = self._repository.get_identity(actor_id)
         membership = self._repository.get_membership(channel_id, actor_id)
-        if membership is None or not membership.permits(capability):
+        if (
+            identity is None
+            or identity.status != IdentityStatus.ACTIVE
+            or membership is None
+            or not membership.permits(capability)
+        ):
             self._audit.record(
                 actor_id=actor_id,
                 action=action,

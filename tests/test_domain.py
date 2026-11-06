@@ -7,6 +7,9 @@ from local_agent_radio.domain import (
     BrokerService,
     Capability,
     Cursor,
+    Identity,
+    IdentityKind,
+    IdentityStatus,
     Membership,
     MembershipRole,
     Message,
@@ -19,10 +22,26 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 
 
 class FakeRepository:
-    def __init__(self, membership: Membership | None) -> None:
+    def __init__(
+        self, membership: Membership | None, actor: Identity | None = None
+    ) -> None:
         self.membership = membership
+        self.actor = actor
+        if self.actor is None and membership is not None:
+            self.actor = Identity(
+                id=membership.identity_id,
+                display_name="Test actor",
+                kind=IdentityKind.AGENT,
+                status=IdentityStatus.ACTIVE,
+                created_at=NOW,
+            )
         self.messages: list[Message] = []
         self.cursor: Cursor | None = None
+
+    def get_identity(self, identity_id: UUID):
+        if self.actor is not None and self.actor.id == identity_id:
+            return self.actor
+        return None
 
     def get_membership(self, channel_id: UUID, identity_id: UUID):
         if (
@@ -169,6 +188,23 @@ class BrokerServiceTests(TestCase):
         self.assertEqual([], repository.messages)
         self.assertEqual("denied", self.audit.events[0]["outcome"])
 
+    def test_public_membership_does_not_grant_private_channel_access(self) -> None:
+        public_channel_id = uuid4()
+        repository = FakeRepository(
+            membership(self.actor_id, public_channel_id, Capability.SEND_MESSAGES)
+        )
+        service = BrokerService(repository, self.audit)
+
+        with self.assertRaises(AuthorizationDenied):
+            service.send_message(
+                actor_id=self.actor_id,
+                channel_id=self.channel_id,
+                body="private request",
+                correlation_id=uuid4(),
+            )
+
+        self.assertEqual([], repository.messages)
+
     def test_send_and_read_share_domain_rules(self) -> None:
         repository = FakeRepository(
             membership(
@@ -218,6 +254,31 @@ class BrokerServiceTests(TestCase):
                 body="hello",
                 correlation_id=uuid4(),
             )
+
+    def test_revoked_identity_has_no_authority_with_active_membership(self) -> None:
+        actor = Identity(
+            id=self.actor_id,
+            display_name="Revoked agent",
+            kind=IdentityKind.AGENT,
+            status=IdentityStatus.REVOKED,
+            created_at=NOW,
+        )
+        repository = FakeRepository(
+            membership(self.actor_id, self.channel_id, Capability.SEND_MESSAGES),
+            actor=actor,
+        )
+        service = BrokerService(repository, self.audit)
+
+        with self.assertRaises(AuthorizationDenied):
+            service.send_message(
+                actor_id=self.actor_id,
+                channel_id=self.channel_id,
+                body="hello",
+                correlation_id=uuid4(),
+            )
+
+        self.assertEqual([], repository.messages)
+        self.assertEqual("denied", self.audit.events[0]["outcome"])
 
     def test_read_limit_is_bounded_before_repository_access(self) -> None:
         repository = FakeRepository(

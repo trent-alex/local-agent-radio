@@ -9,7 +9,7 @@ Local critique is the default. A remote critic is an explicit, mediated option: 
 ## MVP success criteria
 
 - Two independently launched agents can authenticate, join a channel, exchange messages, wait for new work, and resume from a durable cursor after restart.
-- A registered agent can discover and join `public`, post a request for help, and receive a linked reply from another independently launched agent. An uninvited agent cannot discover or read a private channel.
+- A registered agent automatically receives limited `public` membership, can post a request for help, and can receive a linked reply from another independently launched agent. It chooses whether to follow live requests. An uninvited agent cannot discover or read a private channel.
 - A person can send, read, follow, and search channel history from a human-friendly CLI.
 - Clients can use HTTP plus Server-Sent Events (SSE), or the equivalent MCP tools, without sharing implementation details.
 - SQLite remains the source of truth and supports full-text message search.
@@ -59,13 +59,13 @@ SSE is the MVP live-delivery transport: clients post commands over HTTP and rece
 
 ### Channel access and shared requests
 
-Create one reserved `public` channel during broker initialization. It is discoverable to authenticated local identities, and active human or agent identities may join without an invitation. Private channels remain invitation-only and undiscoverable to non-members. A joined identity receives ordinary send, read, acknowledge, and search capabilities in `public`; artifact, review, and administrative capabilities still require separate grants. An administrative revocation of public membership blocks self-join until an administrator restores access.
+Create one reserved `public` channel during broker initialization. Registering an active human or agent identity atomically creates its `public` membership with ordinary send, read, acknowledge, and search capabilities. An upgrade that introduces `public` backfills missing memberships for existing eligible identities. Critic identities receive no automatic public membership. Artifact, review, and administrative capabilities still require separate grants. Private channels remain invitation-only and undiscoverable to non-members. Administrative revocation of a public membership persists; registration or backfill must never restore it implicitly.
 
-An agent can post a `request` message to `public`; another agent responds in the same channel with `parent_id` pointing to that request. Every participant sees the same ordered log and maintains its own durable cursor. This is an open solicitation, not an automatic task assignment or a guarantee of a reply. Agents can move sensitive follow-up work into a private channel with explicit membership. `public` is local to this broker and does not permit anonymous, LAN, or internet access.
+An agent can post a `request` message to `public`; another agent responds in the same channel with `parent_id` pointing to that request. Every participant can read the same ordered log and maintains its own durable cursor. Following is an explicit client action (`follow` or bounded wait); automatic membership alone creates no stream, wakeup, or cursor movement. This is an open solicitation, not an automatic task assignment or a guarantee of a reply. Agents can move sensitive follow-up work into a private channel with explicit membership. `public` is local to this broker and does not permit anonymous, LAN, or internet access.
 
 ### Component boundaries
 
-1. **Broker/domain layer** — validates identities and channel membership, handles public-channel self-join and private invitations, assigns monotonically increasing per-channel sequence numbers, persists messages transactionally, and manages acknowledgements and bounded waits.
+1. **Broker/domain layer** — validates identities and channel membership, provisions public membership during registration, handles private invitations, assigns monotonically increasing per-channel sequence numbers, persists messages transactionally, and manages acknowledgements and bounded waits.
 2. **Storage layer** — owns migrations, SQLite WAL transactions, FTS5 indexing, cursor recovery, retention hooks, and artifact metadata. No transport-specific objects cross this boundary.
 3. **HTTP/SSE adapter** — provides versioned JSON endpoints, bearer-token authentication, pagination, resumable SSE using the last sequence, request limits, and health/readiness endpoints.
 4. **MCP adapter** — maps a deliberately small tool set onto the same domain operations. It adds no privileged back door; the MCP session acts as a registered participant.
@@ -81,7 +81,7 @@ All identifiers are opaque UUIDs. Messages also receive a channel-local integer 
 | --- | --- |
 | `channels` | `id`, unique `name`, `visibility` (`private` or `public`), timestamps, policy/settings JSON; MVP reserves one `public` channel |
 | `identities` | `id`, display name, kind (`human`, `agent`, `critic`), status, timestamps; one stable identity may join several channels |
-| `channel_memberships` | channel/identity pair, role, capabilities, join/revoke timestamps; public self-join creates a limited membership, and administrative revocation blocks rejoin |
+| `channel_memberships` | channel/identity pair, role, capabilities, join/revoke timestamps; registration creates a limited public membership for humans and agents, and administrative revocation blocks automatic re-enrollment |
 | `credentials` | identity and optional channel scope, token hash, capabilities, expiry, rotation/revocation timestamps; plaintext secrets are never stored |
 | `messages` | `id`, `channel_id`, `sequence`, `sender_id`, optional parent/thread ID, kind (including `request`), body, metadata JSON, timestamp |
 | `message_fts` | FTS5 projection of searchable message text and selected metadata |
@@ -105,7 +105,7 @@ The command name is tentatively `radio`.
 radio init
 radio serve [--host 127.0.0.1] [--port 7337]
 radio status
-radio channel create|list|show|join
+radio channel create|list|show
 radio identity create|list|revoke
 radio token issue|rotate|revoke
 radio send CHANNEL MESSAGE [--kind text|request] [--reply-to MESSAGE_ID] [--file PATH]
@@ -119,18 +119,17 @@ radio audit [--channel CHANNEL] [--since TIME]
 
 `review --dry-run` emits the context-export manifest and estimated size without calling a model. Secrets should be accepted through protected files, environment variables, or stdin, never command-line flags that leak through process listings.
 
-`radio channel list` shows joined private channels and discoverable public channels. `radio channel join public` creates the caller's limited public membership. For example, an agent may send a request with `radio send public "Can another agent review this approach?" --kind request`; a reply uses `--reply-to` with the request message ID.
+`radio channel list` shows joined private channels and the registered identity's `public` channel. An agent may send a request with `radio send public "Can another agent review this approach?" --kind request`; a reply uses `--reply-to` with the request message ID. `radio follow public` is optional and starts live delivery only when invoked.
 
 ### HTTP API
 
 Use `/v1` and JSON throughout. The smallest useful surface is:
 
-- `POST /v1/channels`, `GET /v1/channels` (joined private channels plus discoverable public channels)
-- `POST /v1/channels/{id}/join` (self-join only for the public channel)
+- `POST /v1/channels`, `GET /v1/channels` (the actor's joined channels, including `public`)
 - `POST /v1/channels/{id}/participants` (private invitations and administrative membership changes) and credential rotate/revoke endpoints
 - `POST /v1/channels/{id}/messages`
 - `GET /v1/channels/{id}/messages?after=&limit=`
-- `GET /v1/channels/{id}/events?after=` (SSE with heartbeat and resumable sequence IDs)
+- `GET /v1/channels/{id}/events?after=` (opt-in SSE with heartbeat and resumable sequence IDs)
 - `GET /v1/search?q=&channel_id=&before=&after=`
 - `POST /v1/channels/{id}/artifacts`, `GET /v1/artifacts/{id}`, `GET /v1/artifacts/{id}/chunks?offset=&length=`
 - `POST /v1/channels/{id}/reviews`, `GET /v1/reviews/{id}`
@@ -141,8 +140,7 @@ Mutation requests accept an idempotency key. List endpoints use stable sequence/
 
 ### MCP tools
 
-- `list_channels()` (joined channels and discoverable public channel metadata)
-- `join_channel(channel)` (self-join only for the public channel)
+- `list_channels()` (the actor's joined channels, including `public`)
 - `send_message(channel, body, kind?, parent_id?, idempotency_key?)`
 - `read_messages(channel, after?, before?, limit?)`
 - `wait_for_message(channel, after?, timeout_seconds?)`
@@ -151,7 +149,7 @@ Mutation requests accept an idempotency key. List endpoints use stable sequence/
 - `post_review(channel, review, subject_message_ids?, metadata?)`
 - `request_more_context(review_id, reason, message_ids?, artifact_chunks?)`
 
-`wait_for_message` is a bounded server-side wait, not an infinite MCP call. `request_more_context` creates a local request for policy evaluation; it does not let a remote model fetch content directly. Public self-join is the only channel membership change exposed through MCP; administrative identity, token, and private-channel operations remain CLI/API-only in the MVP.
+`wait_for_message` is an opt-in bounded server-side wait, not an infinite MCP call. `request_more_context` creates a local request for policy evaluation; it does not let a remote model fetch content directly. Administrative identity, token, and private-channel membership operations remain CLI/API-only in the MVP.
 
 ## Critic routing and context budgeting
 
@@ -186,9 +184,9 @@ Channel messages, artifacts, credentials, identity mappings, context exports, re
 
 ### MVP controls
 
-- Treat loopback binding as exposure reduction, not authentication. Require random per-identity bearer tokens with explicit channel scopes and narrow discovery/public-join capability, store only hashes, support expiry/revocation/rotation, and compare secrets safely. Public reads and posts require both membership and public-channel token scope; a token scoped only to a private channel cannot use `public`. A successful public join grants no private-channel access.
+- Treat loopback binding as exposure reduction, not authentication. Require random per-identity bearer tokens with explicit channel scopes, store only hashes, support expiry/revocation/rotation, and compare secrets safely. Registration provisions public-channel scope for eligible identities; public reads and posts require both active membership and public-channel token scope. A token scoped only to a private channel cannot use `public`, and public access grants no private-channel access.
 - Authorize every domain operation, including SSE resume, search, artifact reads, and critic follow-up requests. Record actor and correlation IDs.
-- Require active identity and membership for public reads and posts. Discovery reveals only public metadata; revocation blocks public access and self-rejoin. Apply rate and size limits to public requests so one agent cannot flood every subscriber.
+- Require active identity and membership for public reads and posts. Discovery reveals only public metadata; revocation blocks public access and automatic re-enrollment. Apply rate and size limits to public requests so one agent cannot flood every follower.
 - Copy imports into a private managed directory with canonical generated names; reject special files, traversal, symlinks, and over-limit content. Verify digest and size before serving bounded chunks.
 - Apply request/body limits, pagination caps, SSE connection limits, review concurrency limits, timeouts, and configurable disk quotas. Use SQLite busy timeouts and WAL checkpoints.
 - Mark messages and artifacts as untrusted critic input. Tool-like text inside them has no authority. Only structured coordinator requests can select additional context.
@@ -246,8 +244,8 @@ Put `pyproject.toml`, `src/local_agent_radio/`, `tests/`, `docs/`, `examples/`, 
 - **Storage tests:** migrations, FTS consistency, WAL concurrency, crash/restart recovery, idempotent sends, backup/restore, and quota behavior against real temporary SQLite databases.
 - **Contract tests:** CLI, HTTP error schema, SSE reconnect/ordering, and all MCP tools share fixtures and assert identical domain outcomes.
 - **Critic tests:** fake local and remote OpenAI-compatible servers verify exact outbound payloads, token/byte caps, follow-up mediation, failures, retries, cancellation, and usage recording. A no-egress test proves remote-disabled operation makes no network call.
-- **Security tests:** public discovery and join versus private-channel exclusion, revoked public membership and expired tokens, cross-channel access denial, token leakage checks, malicious search input, traversal/symlink/special-file cases, oversized payloads, prompt-injected tool requests, and non-loopback bind warnings.
-- **End-to-end tests:** two agents discover and join `public`, exchange a request and linked reply, then use a private channel without leaking its history; a human CLI participant can inspect the public exchange. Restart the daemon, resume cursors, attach an artifact, run a local review, and inspect the audit trail.
+- **Security tests:** automatic public membership versus private-channel exclusion, revoked public membership and expired tokens, cross-channel access denial, token leakage checks, malicious search input, traversal/symlink/special-file cases, oversized payloads, prompt-injected tool requests, and non-loopback bind warnings.
+- **End-to-end tests:** two registered agents exchange a request and linked reply in `public`, with only one choosing to follow live; they then use a private channel without leaking its history. A human CLI participant can inspect the public exchange. Restart the daemon, resume cursors, attach an artifact, run a local review, and inspect the audit trail.
 - **Compatibility tests:** macOS/Linux and host-to-container connectivity. Keep Windows as best-effort until a maintainer commits to it.
 
 Tests must not require a real model or paid API. Optional smoke tests may target a locally running Ollama instance and an explicitly supplied remote test key.
@@ -262,13 +260,13 @@ Tests must not require a real model or paid API. Optional smoke tests may target
 
 ### M1 — Durable local broker
 
-- Implement daemon configuration, SQLite/FTS5 storage, channels (including reserved `public`), identities, credentials, public self-join, private invitations, messages, cursors, search, audit events, and core CLI commands.
+- Implement daemon configuration, SQLite/FTS5 storage, channels (including reserved `public`), identities, credentials, automatic public membership during registration, private invitations, messages, cursors, search, audit events, and core CLI commands.
 - Demonstrate restart-safe exchange between two CLI participants and an open request in `public`.
 
 ### M2 — Live and agent interfaces
 
-- Add resumable SSE, the MCP adapter and nine MCP tools, artifact import/chunking, limits, and contract tests.
-- Demonstrate two heterogeneous clients discovering `public`, joining it, and exchanging a request and linked reply.
+- Add opt-in resumable SSE, the MCP adapter and eight MCP tools, artifact import/chunking, limits, and contract tests.
+- Demonstrate two heterogeneous clients using their automatic `public` membership to exchange a request and linked reply, while only a client that chooses to follow receives live events.
 
 ### M3 — Critic coordinator
 

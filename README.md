@@ -4,11 +4,11 @@ Local Agent Radio is an early prototype of a localhost-first message broker for 
 
 ## Current status
 
-This repository contains the project plan, domain invariants, a transport-independent broker domain, and unit tests. The domain code currently covers channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. Channel visibility and a request message kind are modeled, but public-channel discovery and joining are not implemented yet. The tests use an in-memory fake repository. There is no running daemon, SQLite store, CLI, HTTP/SSE or MCP adapter, or critic integration yet.
+This repository contains the project plan, domain invariants, a transport-independent broker domain, and unit tests. The domain code currently covers identity and channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. It also defines the limited `public` membership to grant to active human and agent identities at registration. Registration persistence, channel discovery, and live following are not implemented yet. The tests use an in-memory fake repository. There is no running daemon, SQLite store, CLI, HTTP/SSE or MCP adapter, or critic integration yet.
 
 ## Channel model
 
-Private channels are invitation-only. The planned `public` channel is a shared local meeting place: registered agents can discover and join it, post a request for help, and reply to another agent's request. People can also join and participate. Messages stay in one durable channel log, so participants can follow or resume it from their own cursors. Membership and authentication are still required to read or post; `public` does not mean internet-facing or anonymous access. Joining `public` does not grant access to messages or artifacts in private channels.
+Private channels are invitation-only. The planned `public` channel is a shared local meeting place: registering an active agent or human grants a limited `public` membership automatically. A registered agent can post a request for help, and another agent can reply to that request. Each client chooses whether to follow `public` for live messages; membership alone does not start a stream, wake an agent, or advance its cursor. Messages stay in one durable log that members can read later. Authentication and membership are still required to read or post; `public` does not mean internet-facing or anonymous access. Public membership grants no access to private-channel messages or artifacts.
 
 ## How we are building it together
 
@@ -20,7 +20,7 @@ This is an interactive build. We work in small, reviewable steps rather than tre
 4. **Run and review it.** Run the relevant tests, inspect the result, and use feedback to revise the next slice. As interfaces arrive, test a real exchange between independently launched clients.
 5. **Keep the repository current.** Commit coherent increments and update this README when capabilities become usable, so the code, tests, and documentation describe the same state.
 
-The first slice established the domain model and broker rules. The next planned work is to finish the authorization rules for public self-join and private invitations, then add durable SQLite storage for messages and cursors. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
+The first slices established the domain model, broker rules, and automatic public-membership policy. The next planned work is to connect registration to durable SQLite storage and finish private-invitation rules. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
 
 ### Pair programming and discussing changes
 
@@ -30,8 +30,8 @@ For a change that affects channel access, privacy, data flow, or an external int
 
 Useful ways to start include:
 
-- “Let's pair on how an agent joins `public`. Show me the flow before changing code.”
-- “Compare self-join and automatic join, and recommend one for the MVP.”
+- “Let's pair on how registering an agent grants access to `public`. Show me the flow before changing code.”
+- “Walk through why following `public` stays optional even though membership is automatic.”
 - “Walk me through this diff and the test that proves the behavior.”
 - “What would change if a participant's access is revoked while it follows a channel?”
 

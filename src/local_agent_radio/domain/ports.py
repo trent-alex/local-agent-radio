@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol, Sequence
 from uuid import UUID
 
-from .models import Cursor, Membership, Message, MessageKind
+from .models import Cursor, Identity, Membership, Message, MessageKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +27,8 @@ class AppendResult:
 
 class BrokerRepository(Protocol):
     """Atomic persistence operations needed by the broker domain service."""
+
+    def get_identity(self, identity_id: UUID) -> Identity | None: ...
 
     def get_membership(self, channel_id: UUID, identity_id: UUID) -> Membership | None: ...
 

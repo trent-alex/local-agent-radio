@@ -8,13 +8,13 @@ different versions of them.
 
 1. Every operation has one authenticated actor identity. Display names are never
    used for authorization.
-2. Access is denied unless an active channel membership explicitly grants the
-   required capability.
-3. Private channels require an invitation or administrative grant. The shared
-   `public` channel is discoverable by authenticated local identities; active
-   human and agent identities may join it without an invitation. Joining grants
-   only ordinary message capabilities. A revoked public membership cannot be
-   restored by self-joining.
+2. Access is denied unless the actor identity is active and an active channel
+   membership explicitly grants the required capability.
+3. Private channels require an invitation or administrative grant. Registration
+   of an active human or agent identity also creates a limited membership in the
+   reserved `public` channel in the same transaction. Critic identities receive
+   no automatic public membership. Automatic provisioning never overwrites a
+   revoked public membership.
 4. Revocation takes effect before the next operation. An existing connection or
    previously issued credential does not preserve revoked authority.
 5. Administrative authority is separate from ordinary send, read, acknowledge,
@@ -53,6 +53,9 @@ different versions of them.
    earlier sequence for which retained history exists.
 6. SSE event IDs and MCP/HTTP cursor parameters are representations of the domain
    sequence; they do not define a separate ordering system.
+7. Membership does not start a live stream, wake a client, or advance its cursor.
+   Each client opts in to following `public` by opening a follow or bounded wait
+   operation; it may read retained history later without having followed live.
 
 ## Time, audit, and boundaries
 
