@@ -10,23 +10,34 @@ different versions of them.
    used for authorization.
 2. Access is denied unless an active channel membership explicitly grants the
    required capability.
-3. Revocation takes effect before the next operation. An existing connection or
+3. Private channels require an invitation or administrative grant. The shared
+   `public` channel is discoverable by authenticated local identities; active
+   human and agent identities may join it without an invitation. Joining grants
+   only ordinary message capabilities. A revoked public membership cannot be
+   restored by self-joining.
+4. Revocation takes effect before the next operation. An existing connection or
    previously issued credential does not preserve revoked authority.
-4. Administrative authority is separate from ordinary send, read, acknowledge,
+5. Administrative authority is separate from ordinary send, read, acknowledge,
    artifact, and review capabilities.
 
 ## Channels and messages
 
 1. Channel and identity IDs are opaque UUIDs. Channel names are unique labels,
    not security boundaries.
-2. A committed message is immutable. Corrections and deletions are represented by
+2. `public` means shared within one local broker, not anonymous or internet
+   access. Discovery reveals no private channel names or content. A public
+   channel cannot be used to read another channel's messages or artifacts.
+3. A committed message is immutable. Corrections and deletions are represented by
    later records rather than silent mutation of history.
-3. Each committed message has a positive sequence number that is unique within
+4. Each committed message has a positive sequence number that is unique within
    its channel. Committed sequence numbers increase in publication order.
-4. Assigning the sequence number and committing the message is one atomic storage
+5. Assigning the sequence number and committing the message is one atomic storage
    operation. A failed transaction cannot publish a sequence number.
-5. Parent message IDs, when present, must refer to a message in the same channel.
-6. An idempotency key is scoped to the actor, channel, and operation. Repeating a
+6. An agent may post a `request` message in `public` to solicit help. Replies
+   link to the request through `parent_id`; parent message IDs must refer to a
+   message in the same channel. Delivery remains a shared channel log, not a
+   separate copy or guaranteed assignment to every agent.
+7. An idempotency key is scoped to the actor, channel, and operation. Repeating a
    request with the same key and payload returns the original result; reusing the
    key with a different payload is a conflict.
 

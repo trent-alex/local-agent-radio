@@ -43,6 +43,11 @@ class MembershipRole(StrEnum):
     CRITIC = "critic"
 
 
+class ChannelVisibility(StrEnum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
 class Capability(StrEnum):
     SEND_MESSAGES = "send_messages"
     READ_MESSAGES = "read_messages"
@@ -55,6 +60,7 @@ class Capability(StrEnum):
 
 class MessageKind(StrEnum):
     TEXT = "text"
+    REQUEST = "request"
     REVIEW = "review"
     SYSTEM = "system"
 
@@ -77,6 +83,7 @@ class Channel:
     id: UUID
     name: str
     created_at: datetime
+    visibility: ChannelVisibility = ChannelVisibility.PRIVATE
 
     def __post_init__(self) -> None:
         _require_text(self.name, "name", maximum=128)

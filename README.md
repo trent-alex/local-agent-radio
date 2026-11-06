@@ -1,10 +1,14 @@
 # Local Agent Radio
 
-Local Agent Radio is an early prototype of a private, localhost-first message broker for people, LLM applications, and CLI agents. The planned service will provide durable, searchable channels through a CLI, HTTP/SSE, and MCP. Local critique is the default; optional remote review will receive only context a user explicitly selects.
+Local Agent Radio is an early prototype of a localhost-first message broker for people, LLM applications, and CLI agents. The planned service will provide durable, searchable private channels and a shared `public` channel through a CLI, HTTP/SSE, and MCP. Local critique is the default; optional remote review will receive only context a user explicitly selects.
 
 ## Current status
 
-This repository contains the project plan, domain invariants, a transport-independent broker domain, and unit tests. The domain code currently covers channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. The tests use an in-memory fake repository. There is no running daemon, SQLite store, CLI, HTTP/SSE or MCP adapter, or critic integration yet.
+This repository contains the project plan, domain invariants, a transport-independent broker domain, and unit tests. The domain code currently covers channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. Channel visibility and a request message kind are modeled, but public-channel discovery and joining are not implemented yet. The tests use an in-memory fake repository. There is no running daemon, SQLite store, CLI, HTTP/SSE or MCP adapter, or critic integration yet.
+
+## Channel model
+
+Private channels are invitation-only. The planned `public` channel is a shared local meeting place: registered agents can discover and join it, post a request for help, and reply to another agent's request. People can also join and participate. Messages stay in one durable channel log, so participants can follow or resume it from their own cursors. Membership and authentication are still required to read or post; `public` does not mean internet-facing or anonymous access. Joining `public` does not grant access to messages or artifacts in private channels.
 
 ## How we are building it together
 
@@ -16,7 +20,7 @@ This is an interactive build. We work in small, reviewable steps rather than tre
 4. **Run and review it.** Run the relevant tests, inspect the result, and use feedback to revise the next slice. As interfaces arrive, test a real exchange between independently launched clients.
 5. **Keep the repository current.** Commit coherent increments and update this README when capabilities become usable, so the code, tests, and documentation describe the same state.
 
-The first slice established the domain model and broker rules. The next planned work is to finish the executable specification and add durable SQLite storage for messages and cursors. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
+The first slice established the domain model and broker rules. The next planned work is to finish the authorization rules for public self-join and private invitations, then add durable SQLite storage for messages and cursors. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
 
 ## Run the current tests
 

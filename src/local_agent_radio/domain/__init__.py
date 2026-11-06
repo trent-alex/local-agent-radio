@@ -4,6 +4,7 @@ from .errors import AuthorizationDenied, DomainError, IdempotencyConflict, NotFo
 from .models import (
     Capability,
     Channel,
+    ChannelVisibility,
     Cursor,
     Identity,
     IdentityKind,
@@ -21,6 +22,7 @@ __all__ = [
     "BrokerService",
     "Capability",
     "Channel",
+    "ChannelVisibility",
     "Cursor",
     "DomainError",
     "Identity",
