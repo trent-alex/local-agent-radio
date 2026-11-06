@@ -22,6 +22,21 @@ This is an interactive build. We work in small, reviewable steps rather than tre
 
 The first slice established the domain model and broker rules. The next planned work is to finish the authorization rules for public self-join and private invitations, then add durable SQLite storage for messages and cursors. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
 
+### Pair programming and discussing changes
+
+We can work through a change together at any point, including before any code is written. Start with a behavior you want, a question about the design, or a file you want to understand. The assistant should explain the current behavior, propose a small next step, describe meaningful tradeoffs, and walk through the resulting code and tests in enough detail for you to challenge or redirect the work. You do not need to know the implementation details before starting the discussion.
+
+For a change that affects channel access, privacy, data flow, or an external interface, we should discuss an example interaction and the boundary it crosses. Then we record the chosen rule in the plan or domain invariants, implement it in a reviewable slice, and check the behavior together. The assistant should suggest a pairing or design discussion when a choice has material consequences, while continuing work that is already clear and authorized.
+
+Useful ways to start include:
+
+- “Let's pair on how an agent joins `public`. Show me the flow before changing code.”
+- “Compare self-join and automatic join, and recommend one for the MVP.”
+- “Walk me through this diff and the test that proves the behavior.”
+- “What would change if a participant's access is revoked while it follows a channel?”
+
+After a working session, the assistant should summarize what changed, why, what was tested, and what remains open. Your questions and corrections can change the plan; they are part of the build process.
+
 ## Run the current tests
 
 Use Python 3.12 or newer from the repository root:
