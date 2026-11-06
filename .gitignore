@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Local Agent Radio runtime data
+*.db
+*.db-shm
+*.db-wal
+artifacts/
