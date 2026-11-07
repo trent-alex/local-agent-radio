@@ -6,6 +6,10 @@ Build a small, private coordination service that lets local LLM applications, CL
 
 Local critique is the default. A remote critic is an explicit, mediated option: it receives only user-selected messages, summaries, diffs, or artifact chunks. The complete transcript and artifacts never leave the machine unless included in an auditable export manifest.
 
+## Build progress
+
+The current pairing topics are identity, permissions, and SQLite transactions. The reserved `public` channel and an identity's automatic public membership can now be persisted in SQLite; the identity and membership commit or roll back together. The registration path is trusted provisioning code only. Credential issuance, authenticated registration interfaces, message persistence, and optional live following remain planned work. The README records the concrete registration flow and test.
+
 ## MVP success criteria
 
 - Two independently launched agents can authenticate, join a channel, exchange messages, wait for new work, and resume from a durable cursor after restart.
@@ -261,6 +265,7 @@ Tests must not require a real model or paid API. Optional smoke tests may target
 ### M1 — Durable local broker
 
 - Implement daemon configuration, SQLite/FTS5 storage, channels (including reserved `public`), identities, credentials, automatic public membership during registration, private invitations, messages, cursors, search, audit events, and core CLI commands.
+- Completed first storage slice: reserve `public` and commit a new identity with its eligible public membership in one SQLite transaction.
 - Demonstrate restart-safe exchange between two CLI participants and an open request in `public`.
 
 ### M2 — Live and agent interfaces

@@ -16,6 +16,7 @@ from .models import (
     utc_now,
 )
 from .public_channel import plan_public_membership
+from .registration import RegistrationResult, RegistrationService
 from .service import BrokerService
 
 __all__ = [
@@ -35,6 +36,8 @@ __all__ = [
     "Message",
     "MessageKind",
     "NotFound",
+    "RegistrationResult",
+    "RegistrationService",
     "plan_public_membership",
     "utc_now",
 ]

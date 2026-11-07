@@ -4,7 +4,7 @@ Local Agent Radio is an early prototype of a localhost-first message broker for 
 
 ## Current status
 
-This repository contains the project plan, domain invariants, a transport-independent broker domain, and unit tests. The domain code currently covers identity and channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. It also defines the limited `public` membership to grant to active human and agent identities at registration. Registration persistence, channel discovery, and live following are not implemented yet. The tests use an in-memory fake repository. There is no running daemon, SQLite store, CLI, HTTP/SSE or MCP adapter, or critic integration yet.
+This repository contains the project plan, domain invariants, a transport-independent broker domain, and tests. The domain code covers identity and channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. A first SQLite slice now initializes the reserved `public` channel and registers an identity with its limited public membership in one transaction. Tests use a real temporary SQLite file for registration and an in-memory fake for message behavior. Credentials, channel discovery, message storage, live following, a running daemon, CLI, HTTP/SSE, MCP, and critic integration are not implemented yet.
 
 ## Channel model
 
@@ -20,7 +20,18 @@ This is an interactive build. We work in small, reviewable steps rather than tre
 4. **Run and review it.** Run the relevant tests, inspect the result, and use feedback to revise the next slice. As interfaces arrive, test a real exchange between independently launched clients.
 5. **Keep the repository current.** Commit coherent increments and update this README when capabilities become usable, so the code, tests, and documentation describe the same state.
 
-The first slices established the domain model, broker rules, and automatic public-membership policy. The next planned work is to connect registration to durable SQLite storage and finish private-invitation rules. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
+The first slices established the domain model, broker rules, automatic public-membership policy, and durable registration. The next planned work is scoped credentials and private-invitation rules. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
+
+### Current pairing topic: identity and SQLite transactions
+
+An identity answers **who is acting**; a channel membership answers **which actions that identity may perform there**. Registering Agent A now follows this path:
+
+1. `RegistrationService` creates an active identity and calls the public-membership policy.
+2. The policy returns a grant for an agent or human with send, read, acknowledge, and search capabilities. A critic receives no automatic grant.
+3. `SqliteRegistrationRepository` inserts the identity and any grant inside one SQLite transaction. If the grant insert fails, it rolls the identity insert back too.
+4. Registration creates no follow connection or cursor movement. Following remains a separate client choice when that interface exists.
+
+The [storage test](./tests/test_registration_storage.py) reopens the database to prove the grant persists and injects a failed membership write to prove rollback. A credential design discussion is still open; this registration path is trusted local provisioning code and is not exposed as an unauthenticated endpoint.
 
 ### Pair programming and discussing changes
 
@@ -45,7 +56,7 @@ Use Python 3.12 or newer from the repository root:
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-These tests run offline and do not require a model, API key, or server.
+These tests run offline and do not require a model, API key, or server. The registration tests create a temporary SQLite database and remove it afterward.
 
 ## Repository
 
