@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from .credentials import Credential, issue_public_credential
 from .models import Channel, Identity, IdentityKind, IdentityStatus, Membership, utc_now
 from .public_channel import plan_public_membership
 
@@ -15,6 +16,7 @@ from .public_channel import plan_public_membership
 class RegistrationResult:
     identity: Identity
     public_membership: Membership | None
+    public_token: str | None = field(repr=False)
 
 
 class RegistrationRepository(Protocol):
@@ -23,9 +25,12 @@ class RegistrationRepository(Protocol):
     def get_public_channel(self) -> Channel: ...
 
     def save_registration(
-        self, identity: Identity, public_membership: Membership | None
+        self,
+        identity: Identity,
+        public_membership: Membership | None,
+        public_credential: Credential | None,
     ) -> None:
-        """Commit the identity and optional membership in one transaction."""
+        """Commit identity, optional membership, and credential together."""
         ...
 
 
@@ -58,5 +63,12 @@ class RegistrationService:
         membership = plan_public_membership(
             identity, public_channel, joined_at=identity.created_at
         )
-        self._repository.save_registration(identity, membership)
-        return RegistrationResult(identity=identity, public_membership=membership)
+        credential, token = (
+            issue_public_credential(identity, public_channel)
+            if membership is not None
+            else (None, None)
+        )
+        self._repository.save_registration(identity, membership, credential)
+        return RegistrationResult(
+            identity=identity, public_membership=membership, public_token=token
+        )

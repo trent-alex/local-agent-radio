@@ -19,6 +19,14 @@ different versions of them.
    previously issued credential does not preserve revoked authority.
 5. Administrative authority is separate from ordinary send, read, acknowledge,
    artifact, and review capabilities.
+6. A newly registered human or agent receives a dedicated credential scoped to
+   `public`. Its random secret is returned once; only a digest is stored. A public
+   token cannot authenticate to a private channel, even when its identity has a
+   private membership. The credential, identity, and public membership are saved
+   in the same transaction. The current public token expires after 90 days.
+7. Authentication checks current credential, identity, and membership status for
+   the requested channel. The broker separately checks the capability needed by
+   the requested operation.
 
 ## Channels and messages
 

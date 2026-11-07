@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from local_agent_radio.domain.credentials import Credential
 from local_agent_radio.domain.models import (
     Capability,
     Channel,
@@ -24,7 +25,7 @@ from local_agent_radio.domain.models import (
 from local_agent_radio.domain.public_channel import PUBLIC_CHANNEL_NAME
 
 
-_SCHEMA = """
+_BASE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -50,12 +51,24 @@ CREATE TABLE IF NOT EXISTS channel_memberships (
 );
 """
 
+_CREDENTIAL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS credentials (
+    id TEXT PRIMARY KEY,
+    identity_id TEXT NOT NULL REFERENCES identities(id),
+    channel_id TEXT NOT NULL REFERENCES channels(id),
+    secret_hash BLOB NOT NULL CHECK (length(secret_hash) = 32),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+"""
+
 
 class SqliteRegistrationRepository:
-    """Owns the reserved channel and atomic identity/member writes.
+    """Owns the reserved channel and atomic registration writes.
 
-    This adapter intentionally exposes no registration endpoint or credential.
-    Its caller must be trusted provisioning code.
+    This adapter exposes no registration endpoint and never stores a plaintext
+    token. Its caller must be trusted provisioning code.
     """
 
     def __init__(self, database_path: str | Path) -> None:
@@ -83,9 +96,9 @@ class SqliteRegistrationRepository:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version > 1:
+                if version > 2:
                     raise RuntimeError(f"unsupported database version {version}")
-                for statement in _SCHEMA.strip().split(";\n"):
+                for statement in _BASE_SCHEMA.strip().split(";\n"):
                     statement = statement.strip().rstrip(";")
                     if statement:
                         connection.execute(statement)
@@ -113,7 +126,9 @@ class SqliteRegistrationRepository:
                     channel = self._channel(row)
                     if channel.visibility != ChannelVisibility.PUBLIC:
                         raise RuntimeError("reserved public channel has wrong visibility")
-                connection.execute("PRAGMA user_version = 1")
+                if version < 2:
+                    connection.execute(_CREDENTIAL_SCHEMA)
+                connection.execute("PRAGMA user_version = 2")
                 connection.commit()
                 return channel
             except Exception:
@@ -133,9 +148,21 @@ class SqliteRegistrationRepository:
         return channel
 
     def save_registration(
-        self, identity: Identity, public_membership: Membership | None
+        self,
+        identity: Identity,
+        public_membership: Membership | None,
+        public_credential: Credential | None,
     ) -> None:
-        """A membership insert failure also rolls back the identity insert."""
+        """Any failed insert rolls the full registration back."""
+        if (public_membership is None) != (public_credential is None):
+            raise ValueError("public membership and credential must be issued together")
+        if public_membership is not None and public_credential is not None:
+            if (
+                public_membership.identity_id != identity.id
+                or public_credential.identity_id != identity.id
+                or public_credential.channel_id != public_membership.channel_id
+            ):
+                raise ValueError("public grant and credential must match the identity")
         with closing(self._connect()) as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
@@ -173,6 +200,25 @@ class SqliteRegistrationRepository:
                             ),
                         ),
                     )
+                if public_credential is not None:
+                    connection.execute(
+                        "INSERT INTO credentials "
+                        "(id, identity_id, channel_id, secret_hash, created_at, "
+                        "expires_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(public_credential.id),
+                            str(public_credential.identity_id),
+                            str(public_credential.channel_id),
+                            public_credential.secret_hash,
+                            public_credential.created_at.isoformat(),
+                            public_credential.expires_at.isoformat(),
+                            (
+                                public_credential.revoked_at.isoformat()
+                                if public_credential.revoked_at is not None
+                                else None
+                            ),
+                        ),
+                    )
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -191,6 +237,27 @@ class SqliteRegistrationRepository:
             kind=IdentityKind(row["kind"]),
             status=IdentityStatus(row["status"]),
             created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    def get_credential(self, credential_id: UUID) -> Credential | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM credentials WHERE id = ?", (str(credential_id),)
+            ).fetchone()
+        if row is None:
+            return None
+        return Credential(
+            id=UUID(row["id"]),
+            identity_id=UUID(row["identity_id"]),
+            channel_id=UUID(row["channel_id"]),
+            secret_hash=row["secret_hash"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            expires_at=datetime.fromisoformat(row["expires_at"]),
+            revoked_at=(
+                datetime.fromisoformat(row["revoked_at"])
+                if row["revoked_at"] is not None
+                else None
+            ),
         )
 
     def get_membership(

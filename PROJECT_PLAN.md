@@ -8,7 +8,7 @@ Local critique is the default. A remote critic is an explicit, mediated option: 
 
 ## Build progress
 
-The current pairing topics are identity, permissions, and SQLite transactions. The reserved `public` channel and an identity's automatic public membership can now be persisted in SQLite; the identity and membership commit or roll back together. The registration path is trusted provisioning code only. Credential issuance, authenticated registration interfaces, message persistence, and optional live following remain planned work. The README records the concrete registration flow and test.
+The current pairing topics are identity, permissions, and SQLite transactions. The reserved `public` channel and an identity's automatic public membership can now be persisted in SQLite along with a dedicated public credential; all three records commit or roll back together. Internal token authentication checks exact channel scope, expiry, and current identity and membership status. The registration path is trusted provisioning code only. Credential rotation, authenticated registration interfaces, authentication auditing, message persistence, and optional live following remain planned work. The README records the concrete registration flow and tests.
 
 ## MVP success criteria
 
@@ -266,6 +266,7 @@ Tests must not require a real model or paid API. Optional smoke tests may target
 
 - Implement daemon configuration, SQLite/FTS5 storage, channels (including reserved `public`), identities, credentials, automatic public membership during registration, private invitations, messages, cursors, search, audit events, and core CLI commands.
 - Completed first storage slice: reserve `public` and commit a new identity with its eligible public membership in one SQLite transaction.
+- Completed credential slice: issue one dedicated `public` token to each eligible new identity, store its digest only, and commit it with the identity and membership. The token has a 90-day lifetime; rotation and issuance for preexisting identities are still planned.
 - Demonstrate restart-safe exchange between two CLI participants and an open request in `public`.
 
 ### M2 — Live and agent interfaces

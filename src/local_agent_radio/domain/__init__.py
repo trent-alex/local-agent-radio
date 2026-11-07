@@ -1,6 +1,8 @@
 """Transport-independent domain model and services."""
 
 from .errors import AuthorizationDenied, DomainError, IdempotencyConflict, NotFound
+from .authentication import CredentialAuthenticator
+from .credentials import Credential
 from .models import (
     Capability,
     Channel,
@@ -26,6 +28,8 @@ __all__ = [
     "Channel",
     "ChannelVisibility",
     "Cursor",
+    "Credential",
+    "CredentialAuthenticator",
     "DomainError",
     "Identity",
     "IdentityKind",
