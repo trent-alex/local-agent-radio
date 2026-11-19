@@ -4,7 +4,7 @@ Local Agent Radio is an early prototype of a localhost-first message broker for 
 
 ## Current status
 
-This repository contains the project plan, domain invariants, a transport-independent broker domain, and tests. The domain code covers identity and channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. SQLite initializes the reserved `public` channel and registers an identity, its limited public membership, and a dedicated public credential in one transaction. An internal authenticator validates the token against its exact channel, expiry, and current identity and membership status. Tests use a real temporary SQLite file for registration and an in-memory fake for message behavior. Credential rotation and operator authorization, authentication and audit adapters, channel discovery, message storage, live following, a running daemon, CLI, HTTP/SSE, MCP, and critic integration are not implemented yet.
+This repository contains the project plan, domain invariants, a transport-independent broker domain, and tests. The domain code covers identity and channel membership checks, sending and reading messages, cursor acknowledgement, and audit calls through interfaces. SQLite initializes the reserved `public` channel and registers an identity, its limited public membership, and a dedicated public credential in one transaction. An internal authenticator validates the token against its exact channel, expiry, and current identity and membership status. SQLite now persists messages, assigns channel-local sequences, returns idempotent retries, checks reply parents, and reads ordered history after restart. Tests use real temporary SQLite files for registration and message append/read; service-level reading and cursor behavior still use an in-memory fake. Credential rotation and operator authorization, authentication and audit adapters, channel discovery, durable delivery cursors, live following, a running daemon, CLI, HTTP/SSE, MCP, and critic integration are not implemented yet.
 
 ## Channel model
 
@@ -20,7 +20,7 @@ This is an interactive build. We work in small, reviewable steps rather than tre
 4. **Run and review it.** Run the relevant tests, inspect the result, and use feedback to revise the next slice. As interfaces arrive, test a real exchange between independently launched clients.
 5. **Keep the repository current.** Commit coherent increments and update this README when capabilities become usable, so the code, tests, and documentation describe the same state.
 
-The first slices established the domain model, broker rules, automatic public-membership policy, durable registration, and a dedicated public credential. The next planned work is credential rotation and private-invitation rules. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
+The first slices established the domain model, broker rules, automatic public-membership policy, durable registration, a dedicated public credential, and durable message append/read. The next storage slice is durable delivery and acknowledgement cursors. Credential rotation and private-invitation rules also remain planned. The [milestones](./PROJECT_PLAN.md#milestones) track the broader path to a usable local broker.
 
 ### Current pairing topic: identity, credentials, and SQLite transactions
 
@@ -28,11 +28,17 @@ An identity answers **who is acting**; a channel membership answers **which acti
 
 1. [Open `RegistrationService.register()`](./src/local_agent_radio/domain/registration.py#L47). It creates an active identity and calls the public-membership policy. The policy grants an agent or human send, read, acknowledge, and search capabilities; a critic receives no automatic grant.
 2. [Look at the credential issue function](./src/local_agent_radio/domain/credentials.py#L52). For a public member, it generates a random secret, stores only its SHA-256 digest in a credential record, scopes that record to the reserved `public` channel, and sets a 90-day expiry. The raw token is returned once after the transaction commits and is omitted from object representations.
-3. [Look at `save_registration()`](./src/local_agent_radio/storage/registration.py#L150). SQLite inserts identity, membership, and credential inside one transaction. A failure at any insert rolls all three back. A version-one registration database upgrades to the credential schema without dropping existing identities or memberships. Existing version-one identities need a separate credential-issuance operation before they can authenticate; that operation is still planned.
+3. [Look at `save_registration()`](./src/local_agent_radio/storage/registration.py#L179). SQLite inserts identity, membership, and credential inside one transaction. A failure at any insert rolls all three back. A version-one registration database upgrades to the current schema without dropping existing identities or memberships. Existing version-one identities need a separate credential-issuance operation before they can authenticate; that operation is still planned.
 4. [Look at `CredentialAuthenticator.authenticate()`](./src/local_agent_radio/domain/authentication.py#L32). It checks the secret, exact channel scope, expiry, active identity, and active membership. A public token is rejected for a private channel, even if that identity has been invited there. The broker still checks the capability required by the specific message operation.
 5. Registration creates no follow connection or cursor movement. Following remains a separate client choice when that interface exists.
 
 The [storage tests](./tests/test_registration_storage.py) reopen the database to prove persistence, inject failures at the membership and credential inserts to prove rollback, and verify that a public token cannot authenticate to a private channel. This registration path is trusted local provisioning code and is not exposed as an unauthenticated endpoint.
+
+### Current pairing slice: a durable public request
+
+The [message storage test](./tests/test_message_storage.py#L54) registers Agent A, authenticates its public token, calls the broker's `send_message()` with kind `request`, and opens a new SQLite repository instance to read back that same message with sequence 1. It first failed because the SQLite repository had no `append_message()` method; adding the messages table and [transactional append](./src/local_agent_radio/storage/registration.py#L318) made it pass.
+
+Further tests show that retrying the same idempotency key returns the original message, a changed payload under that key conflicts, Agent B can save a reply linked to Agent A's request, and a parent from another channel is rejected. [Ordered reads](./src/local_agent_radio/storage/registration.py#L391) accept an `after_sequence` value, so the reply can be read after sequence 1 even after reopening the database. The SQLite adapter does not yet store delivery or acknowledgement cursors, so `BrokerService.read_messages()` is still exercised with the in-memory fake rather than this adapter. No live follow or client interface exists yet.
 
 ### Pair programming and discussing changes
 
@@ -57,7 +63,7 @@ Use Python 3.12 or newer from the repository root:
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-These tests run offline and do not require a model, API key, or server. The registration tests create a temporary SQLite database and remove it afterward.
+These tests run offline and do not require a model, API key, or server. Registration and message storage tests create temporary SQLite databases and remove them afterward.
 
 ## Repository
 

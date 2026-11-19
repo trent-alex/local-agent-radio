@@ -1,4 +1,4 @@
-"""Small SQLite registration store; later broker storage builds on this schema."""
+"""SQLite storage for registration and the first durable message operations."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from local_agent_radio.domain.credentials import Credential
+from local_agent_radio.domain.errors import IdempotencyConflict, NotFound
 from local_agent_radio.domain.models import (
     Capability,
     Channel,
@@ -20,8 +21,11 @@ from local_agent_radio.domain.models import (
     IdentityStatus,
     Membership,
     MembershipRole,
+    Message,
+    MessageKind,
     utc_now,
 )
+from local_agent_radio.domain.ports import AppendMessage, AppendResult
 from local_agent_radio.domain.public_channel import PUBLIC_CHANNEL_NAME
 
 
@@ -63,9 +67,29 @@ CREATE TABLE IF NOT EXISTS credentials (
 );
 """
 
+_MESSAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES channels(id),
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    sender_id TEXT NOT NULL REFERENCES identities(id),
+    kind TEXT NOT NULL CHECK (kind IN ('text', 'request', 'review', 'system')),
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    parent_id TEXT,
+    idempotency_key TEXT,
+    UNIQUE (channel_id, sequence),
+    UNIQUE (channel_id, sender_id, idempotency_key),
+    UNIQUE (id, channel_id),
+    FOREIGN KEY (parent_id, channel_id) REFERENCES messages(id, channel_id)
+);
+CREATE INDEX IF NOT EXISTS messages_channel_sequence
+    ON messages(channel_id, sequence);
+"""
+
 
 class SqliteRegistrationRepository:
-    """Owns the reserved channel and atomic registration writes.
+    """Owns the reserved channel, registration, and message records.
 
     This adapter exposes no registration endpoint and never stores a plaintext
     token. Its caller must be trusted provisioning code.
@@ -96,7 +120,7 @@ class SqliteRegistrationRepository:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version > 2:
+                if version > 3:
                     raise RuntimeError(f"unsupported database version {version}")
                 for statement in _BASE_SCHEMA.strip().split(";\n"):
                     statement = statement.strip().rstrip(";")
@@ -128,7 +152,12 @@ class SqliteRegistrationRepository:
                         raise RuntimeError("reserved public channel has wrong visibility")
                 if version < 2:
                     connection.execute(_CREDENTIAL_SCHEMA)
-                connection.execute("PRAGMA user_version = 2")
+                if version < 3:
+                    for statement in _MESSAGE_SCHEMA.strip().split(";\n"):
+                        statement = statement.strip().rstrip(";")
+                        if statement:
+                            connection.execute(statement)
+                connection.execute("PRAGMA user_version = 3")
                 connection.commit()
                 return channel
             except Exception:
@@ -284,6 +313,108 @@ class SqliteRegistrationRepository:
                 if row["revoked_at"] is not None
                 else None
             ),
+        )
+
+    def append_message(self, command: AppendMessage) -> AppendResult:
+        """Allocate a channel sequence and save a message in one transaction."""
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                if command.idempotency_key is not None:
+                    previous = connection.execute(
+                        "SELECT * FROM messages WHERE channel_id = ? "
+                        "AND sender_id = ? AND idempotency_key = ?",
+                        (
+                            str(command.channel_id),
+                            str(command.sender_id),
+                            command.idempotency_key,
+                        ),
+                    ).fetchone()
+                    if previous is not None:
+                        saved = self._message(previous)
+                        if (
+                            saved.kind != command.kind
+                            or saved.body != command.body
+                            or saved.parent_id != command.parent_id
+                        ):
+                            raise IdempotencyConflict(
+                                "idempotency key was reused with a different message"
+                            )
+                        connection.commit()
+                        return AppendResult(message=saved, created=False)
+
+                if command.parent_id is not None:
+                    parent = connection.execute(
+                        "SELECT channel_id FROM messages WHERE id = ?",
+                        (str(command.parent_id),),
+                    ).fetchone()
+                    if parent is None or parent["channel_id"] != str(command.channel_id):
+                        raise NotFound("parent message is not in this channel")
+
+                sequence = connection.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE channel_id = ?",
+                    (str(command.channel_id),),
+                ).fetchone()[0]
+                message = Message(
+                    id=uuid4(),
+                    channel_id=command.channel_id,
+                    sequence=sequence,
+                    sender_id=command.sender_id,
+                    kind=command.kind,
+                    body=command.body,
+                    created_at=utc_now(),
+                    parent_id=command.parent_id,
+                    idempotency_key=command.idempotency_key,
+                )
+                connection.execute(
+                    "INSERT INTO messages "
+                    "(id, channel_id, sequence, sender_id, kind, body, created_at, "
+                    "parent_id, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(message.id),
+                        str(message.channel_id),
+                        message.sequence,
+                        str(message.sender_id),
+                        message.kind.value,
+                        message.body,
+                        message.created_at.isoformat(),
+                        str(message.parent_id) if message.parent_id is not None else None,
+                        message.idempotency_key,
+                    ),
+                )
+                connection.commit()
+                return AppendResult(message=message, created=True)
+            except Exception:
+                connection.rollback()
+                raise
+
+    def read_messages(
+        self, channel_id: UUID, *, after_sequence: int, limit: int
+    ) -> tuple[Message, ...]:
+        if after_sequence < 0:
+            raise ValueError("after_sequence cannot be negative")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM messages WHERE channel_id = ? AND sequence > ? "
+                "ORDER BY sequence LIMIT ?",
+                (str(channel_id), after_sequence, limit),
+            ).fetchall()
+        return tuple(self._message(row) for row in rows)
+
+    @staticmethod
+    def _message(row: sqlite3.Row) -> Message:
+        return Message(
+            id=UUID(row["id"]),
+            channel_id=UUID(row["channel_id"]),
+            sequence=row["sequence"],
+            sender_id=UUID(row["sender_id"]),
+            kind=MessageKind(row["kind"]),
+            body=row["body"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            parent_id=UUID(row["parent_id"]) if row["parent_id"] is not None else None,
+            idempotency_key=row["idempotency_key"],
         )
 
     @staticmethod

@@ -195,6 +195,7 @@ class RegistrationStorageTests(TestCase):
     def test_version_one_store_upgrades_without_losing_membership(self) -> None:
         registered = self.service.register(display_name="Agent A", kind=IdentityKind.AGENT)
         with sqlite3.connect(self.database_path) as connection:
+            connection.execute("DROP TABLE messages")
             connection.execute("DROP TABLE credentials")
             connection.execute("PRAGMA user_version = 1")
 
@@ -208,8 +209,9 @@ class RegistrationStorageTests(TestCase):
             self.repository.get_membership(self.public.id, registered.identity.id),
         )
         with sqlite3.connect(self.database_path) as connection:
-            self.assertEqual(2, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
             self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM credentials").fetchone()[0])
+            self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
 
     def test_reinitialize_does_not_restore_revoked_membership(self) -> None:
         registered = self.service.register(display_name="Agent A", kind=IdentityKind.AGENT)
